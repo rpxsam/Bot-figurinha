@@ -7,6 +7,13 @@ const os = require('os')
 const pino = require('pino')
 
 async function connectToWhatsApp() {
+  if (process.env.CLEAR_SESSION === 'true') {
+    if (fs.existsSync('auth_info')) {
+      fs.rmSync('auth_info', { recursive: true })
+      console.log('🗑️ Sessão limpa!')
+    }
+  }
+
   const { state, saveCreds } = await useMultiFileAuthState('auth_info')
 
   const sock = makeWASocket({
@@ -16,15 +23,20 @@ async function connectToWhatsApp() {
     },
     printQRInTerminal: false,
     logger: pino({ level: 'silent' }),
-    browser: ['Bot', 'Chrome', '22.0'],
+    browser: ['Ubuntu', 'Chrome', '22.0.0'],
   })
 
   sock.ev.on('creds.update', saveCreds)
 
   sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
     if (connection === 'close') {
-      const shouldReconnect = new Boom(lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut
-      if (shouldReconnect) connectToWhatsApp()
+      const code = new Boom(lastDisconnect?.error)?.output?.statusCode
+      if (code === DisconnectReason.loggedOut) {
+        console.log('❌ Deslogado!')
+      } else {
+        console.log('🔄 Reconectando...')
+        setTimeout(() => connectToWhatsApp(), 5000)
+      }
     } else if (connection === 'open') {
       console.log('✅ Bot conectado!')
     }
@@ -33,12 +45,13 @@ async function connectToWhatsApp() {
   if (!sock.authState.creds.registered) {
     const phoneNumber = process.env.PHONE_NUMBER
     console.log(`📱 Solicitando código para: ${phoneNumber}`)
-    await new Promise(r => setTimeout(r, 5000))
+    await new Promise(r => setTimeout(r, 8000))
     try {
       const code = await sock.requestPairingCode(phoneNumber)
       console.log(`🔑 Código de pareamento: ${code}`)
     } catch (err) {
       console.error('Erro ao solicitar código:', err.message)
+      setTimeout(() => connectToWhatsApp(), 10000)
     }
   }
 
