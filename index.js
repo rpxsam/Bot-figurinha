@@ -10,12 +10,12 @@ async function connectToWhatsApp() {
 
   const sock = makeWASocket({
     auth: state,
-    printQRInTerminal: true,
+    printQRInTerminal: false,
   })
 
   sock.ev.on('creds.update', saveCreds)
 
-  sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
+  sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
     if (connection === 'close') {
       const shouldReconnect = new Boom(lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut
       if (shouldReconnect) connectToWhatsApp()
@@ -24,16 +24,24 @@ async function connectToWhatsApp() {
     }
   })
 
+  // Gera o código de pareamento
+  if (!sock.authState.creds.registered) {
+    const phoneNumber = process.env.PHONE_NUMBER
+    setTimeout(async () => {
+      const code = await sock.requestPairingCode(phoneNumber)
+      console.log(`🔑 Código de pareamento: ${code}`)
+    }, 3000)
+  }
+
   sock.ev.on('messages.upsert', async ({ messages }) => {
     const msg = messages[0]
     if (!msg.message || msg.key.fromMe) return
 
     const type = Object.keys(msg.message)[0]
     const isVideo = type === 'videoMessage'
-    const isGif = type === 'videoMessage' && msg.message.videoMessage?.gifPlayback
     const isImage = type === 'imageMessage'
 
-    if (!isVideo && !isGif && !isImage) return
+    if (!isVideo && !isImage) return
 
     const jid = msg.key.remoteJid
     await sock.sendMessage(jid, { text: '⏳ Convertendo figurinha...' })
@@ -46,7 +54,7 @@ async function connectToWhatsApp() {
       fs.writeFileSync(tmpInput, buffer)
 
       await new Promise((resolve, reject) => {
-        let cmd = ffmpeg(tmpInput).outputOptions([
+        ffmpeg(tmpInput).outputOptions([
           '-vcodec', 'libwebp',
           '-vf', isImage
             ? 'scale=512:512:force_original_aspect_ratio=decrease'
@@ -57,15 +65,12 @@ async function connectToWhatsApp() {
           '-vsync', '0',
           '-t', '10'
         ]).toFormat('webp').save(tmpOutput)
-
-        cmd.on('end', resolve).on('error', reject)
+          .on('end', resolve)
+          .on('error', reject)
       })
 
       const webpBuffer = fs.readFileSync(tmpOutput)
-
-      await sock.sendMessage(jid, {
-        sticker: webpBuffer
-      })
+      await sock.sendMessage(jid, { sticker: webpBuffer })
 
       fs.unlinkSync(tmpInput)
       fs.unlinkSync(tmpOutput)
