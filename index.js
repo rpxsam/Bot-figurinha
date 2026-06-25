@@ -1,16 +1,22 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys')
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys')
 const { Boom } = require('@hapi/boom')
 const ffmpeg = require('fluent-ffmpeg')
 const fs = require('fs')
 const path = require('path')
 const os = require('os')
+const pino = require('pino')
 
 async function connectToWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info')
 
   const sock = makeWASocket({
-    auth: state,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }))
+    },
     printQRInTerminal: false,
+    logger: pino({ level: 'silent' }),
+    browser: ['Bot', 'Chrome', '22.0'],
   })
 
   sock.ev.on('creds.update', saveCreds)
@@ -24,13 +30,16 @@ async function connectToWhatsApp() {
     }
   })
 
-  // Gera o código de pareamento
   if (!sock.authState.creds.registered) {
     const phoneNumber = process.env.PHONE_NUMBER
-    setTimeout(async () => {
+    console.log(`📱 Solicitando código para: ${phoneNumber}`)
+    await new Promise(r => setTimeout(r, 5000))
+    try {
       const code = await sock.requestPairingCode(phoneNumber)
       console.log(`🔑 Código de pareamento: ${code}`)
-    }, 3000)
+    } catch (err) {
+      console.error('Erro ao solicitar código:', err.message)
+    }
   }
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
